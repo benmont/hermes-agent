@@ -269,6 +269,7 @@ _API_KEY_PROVIDER_AUX_MODELS_FALLBACK: Dict[str, str] = {
     "minimax-oauth": "MiniMax-M2.7-highspeed",
     "minimax-cn": "MiniMax-M2.7",
     "anthropic": "claude-haiku-4-5-20251001",
+    "claude-cli": "claude-sonnet-4-6",
     "ai-gateway": "google/gemini-3-flash",
     "opencode-zen": "gemini-3-flash",
     "opencode-go": "glm-5",
@@ -1902,6 +1903,53 @@ def _try_anthropic(explicit_api_key: str = None) -> Tuple[Optional[Any], Optiona
     return AnthropicAuxiliaryClient(real_client, model, token, base_url, is_oauth=is_oauth), model
 
 
+def _try_claude_cli() -> Tuple[Optional[Any], Optional[str]]:
+    """Return a ClaudeCliAdapter if the ``claude`` CLI is installed."""
+    try:
+        from agent.claude_cli_adapter import ClaudeCliAdapter, is_claude_cli_available
+    except ImportError:
+        return None, None
+    if not is_claude_cli_available():
+        return None, None
+    model = _API_KEY_PROVIDER_AUX_MODELS.get("claude-cli", "claude-sonnet-4-6")
+    logger.debug("Auxiliary client: claude-cli subprocess (model=%s)", model)
+    return ClaudeCliAdapter(model=model), model
+
+
+def _resolve_forced_provider(forced: str) -> Tuple[Optional[OpenAI], Optional[str]]:
+    """Resolve a specific forced provider.  Returns (None, None) if creds missing."""
+    if forced == "openrouter":
+        client, model = _try_openrouter()
+        if client is None:
+            logger.warning("auxiliary.provider=openrouter but OPENROUTER_API_KEY not set")
+        return client, model
+
+    if forced == "nous":
+        client, model = _try_nous()
+        if client is None:
+            logger.warning("auxiliary.provider=nous but Nous Portal not configured (run: hermes auth)")
+        return client, model
+
+    if forced == "codex":
+        client, model = _try_codex()
+        if client is None:
+            logger.warning("auxiliary.provider=codex but no Codex OAuth token found (run: hermes model)")
+        return client, model
+
+    if forced == "main":
+        # "main" = skip OpenRouter/Nous, use the main chat model's credentials.
+        for try_fn in (_try_custom_endpoint, _try_codex, _resolve_api_key_provider):
+            client, model = try_fn()
+            if client is not None:
+                return client, model
+        logger.warning("auxiliary.provider=main but no main endpoint credentials found")
+        return None, None
+
+    # Unknown provider name — fall through to auto
+    logger.warning("Unknown auxiliary.provider=%r, falling back to auto", forced)
+    return None, None
+
+
 _AUTO_PROVIDER_LABELS = {
     "_try_openrouter": "openrouter",
     "_try_nous": "nous",
@@ -1945,6 +1993,8 @@ def _get_provider_chain() -> List[tuple]:
         ("nous", _try_nous),
         ("local/custom", _try_custom_endpoint),
         ("api-key", _resolve_api_key_provider),
+        # claude-cli is last: zero-config but subprocess overhead is higher
+        ("claude-cli", _try_claude_cli),
     ]
 
 
@@ -2693,6 +2743,12 @@ def _to_async_client(sync_client, model: str, is_vision: bool = False):
             return sync_client, model
     except ImportError:
         pass
+    try:
+        from agent.claude_cli_adapter import ClaudeCliAdapter, AsyncClaudeCliAdapter
+        if isinstance(sync_client, ClaudeCliAdapter):
+            return AsyncClaudeCliAdapter(sync_client), model
+    except ImportError:
+        pass
 
     async_kwargs = {
         "api_key": sync_client.api_key,
@@ -3002,6 +3058,22 @@ def resolve_provider_client(
         logger.warning("resolve_provider_client: custom/main requested "
                        "but no endpoint credentials found")
         return None, None
+
+    # ── Claude CLI (subprocess) ───────────────────────────────────────
+    if provider in ("claude-cli", "claude_cli"):
+        client, default = _try_claude_cli()
+        if client is None:
+            logger.warning(
+                "resolve_provider_client: claude-cli requested but the "
+                "'claude' CLI is not installed — "
+                "run: npm install -g @anthropic-ai/claude-code"
+            )
+            return None, None
+        final_model = model or default
+        if async_mode:
+            from agent.claude_cli_adapter import AsyncClaudeCliAdapter
+            return AsyncClaudeCliAdapter(client), final_model
+        return client, final_model
 
     # ── Named custom providers (config.yaml providers dict / custom_providers list) ───
     try:

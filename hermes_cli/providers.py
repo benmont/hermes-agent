@@ -44,6 +44,13 @@ class HermesOverlay:
 
 
 HERMES_OVERLAYS: Dict[str, HermesOverlay] = {
+    "claude-cli": HermesOverlay(
+        # Inference via the local ``claude`` CLI subprocess.
+        # Requires npm install -g @anthropic-ai/claude-code and a Claude Pro/Max login.
+        # No API key needed — the CLI manages its own OAuth credentials.
+        transport="claude_cli",
+        auth_type="external_process",
+    ),
     "openrouter": HermesOverlay(
         transport="openai_chat",
         is_aggregator=True,
@@ -237,6 +244,11 @@ class ProviderDef:
 # Uses models.dev IDs where possible.
 
 ALIASES: Dict[str, str] = {
+    # claude-cli
+    "claude_cli": "claude-cli",
+    "claude-code-cli": "claude-cli",
+    "claudecli": "claude-cli",
+
     # openrouter
     "openai": "openrouter",     # bare "openai" → route through aggregator
 
@@ -377,6 +389,7 @@ _LABEL_OVERRIDES: Dict[str, str] = {
     "gmi": "GMI Cloud",
     "tencent-tokenhub": "Tencent TokenHub",
     "lmstudio": "LM Studio",
+    "claude-cli": "Claude CLI",
     "local": "Local endpoint",
     "bedrock": "AWS Bedrock",
     "ollama-cloud": "Ollama Cloud",
@@ -390,6 +403,7 @@ TRANSPORT_TO_API_MODE: Dict[str, str] = {
     "anthropic_messages": "anthropic_messages",
     "codex_responses": "codex_responses",
     "bedrock_converse": "bedrock_converse",
+    "claude_cli": "claude_cli",
 }
 
 
@@ -491,6 +505,37 @@ def get_label(provider_id: str) -> str:
     return canonical
 
 
+# For direct import compat, expose as module-level dict
+# Built on demand by get_label() calls
+LABELS: Dict[str, str] = {
+    # Static entries for backward compat — get_label() is the proper API
+    "openrouter": "OpenRouter",
+    "nous": "Nous Portal",
+    "openai-codex": "OpenAI Codex",
+    "copilot-acp": "GitHub Copilot ACP",
+    "github-copilot": "GitHub Copilot",
+    "anthropic": "Anthropic",
+    "zai": "Z.AI / GLM",
+    "kimi-for-coding": "Kimi / Moonshot",
+    "minimax": "MiniMax",
+    "minimax-cn": "MiniMax (China)",
+    "deepseek": "DeepSeek",
+    "alibaba": "Alibaba Cloud (DashScope)",
+    "vercel": "Vercel AI Gateway",
+    "opencode": "OpenCode Zen",
+    "opencode-go": "OpenCode Go",
+    "kilo": "Kilo Gateway",
+    "huggingface": "Hugging Face",
+    "claude-cli": "Claude CLI",
+    "local": "Local endpoint",
+    "custom": "Custom endpoint",
+    # Legacy Hermes IDs (point to same providers)
+    "ai-gateway": "Vercel AI Gateway",
+    "kilocode": "Kilo Gateway",
+    "copilot": "GitHub Copilot",
+    "kimi-coding": "Kimi / Moonshot",
+    "opencode-zen": "OpenCode Zen",
+}
 
 
 def is_aggregator(provider: str) -> bool:

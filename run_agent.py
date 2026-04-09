@@ -1271,8 +1271,10 @@ class AIAgent:
         self.provider = provider_name or ""
         self.acp_command = acp_command or command
         self.acp_args = list(acp_args or args or [])
-        if api_mode in {"chat_completions", "codex_responses", "anthropic_messages", "bedrock_converse", "codex_app_server"}:
+        if api_mode in {"chat_completions", "codex_responses", "anthropic_messages", "bedrock_converse", "codex_app_server", "claude_cli"}:
             self.api_mode = api_mode
+        elif self.provider in ("claude-cli", "claude_cli"):
+            self.api_mode = "claude_cli"
         elif self.provider == "openai-codex":
             self.api_mode = "codex_responses"
         elif self.provider in {"xai", "xai-oauth"}:
@@ -1557,6 +1559,7 @@ class AIAgent:
         # access for Codex Responses API streaming.
         self._anthropic_client = None
         self._is_anthropic_oauth = False
+        self._claude_cli_adapter = None
 
         # Resolve per-provider / per-model request timeout once up front so
         # every client construction path below (Anthropic native, OpenAI-wire,
@@ -1564,7 +1567,14 @@ class AIAgent:
         # Claude uses its own timeout path and is not covered here.
         _provider_timeout = get_provider_request_timeout(self.provider, self.model)
 
-        if self.api_mode == "anthropic_messages":
+        if self.api_mode == "claude_cli":
+            from agent.claude_cli_adapter import ClaudeCliAdapter
+            self._claude_cli_adapter = ClaudeCliAdapter(model=model)
+            self.client = None
+            self._client_kwargs = {}
+            if not self.quiet_mode:
+                print(f"🤖 AI Agent initialized with model: {self.model} (Claude CLI subprocess)")
+        elif self.api_mode == "anthropic_messages":
             from agent.anthropic_adapter import build_anthropic_client, resolve_anthropic_token
             # Bedrock + Claude → use AnthropicBedrock SDK for full feature parity
             # (prompt caching, thinking budgets, adaptive thinking).
@@ -2683,7 +2693,12 @@ class AIAgent:
             self.api_key = api_key
 
         # ── Build new client ──
-        if api_mode == "anthropic_messages":
+        if api_mode == "claude_cli":
+            from agent.claude_cli_adapter import ClaudeCliAdapter
+            self._claude_cli_adapter = ClaudeCliAdapter(model=new_model)
+            self.client = None
+            self._client_kwargs = {}
+        elif api_mode == "anthropic_messages":
             from agent.anthropic_adapter import (
                 build_anthropic_client,
                 resolve_anthropic_token,
@@ -7745,6 +7760,12 @@ class AIAgent:
                             invalidate_runtime_client(region)
                         raise
                     result["response"] = normalize_converse_response(raw_response)
+                elif self.api_mode == "claude_cli":
+                    result["response"] = self._claude_cli_adapter.chat.completions.create(
+                        messages=api_kwargs.get("messages", []),
+                        model=api_kwargs.get("model", self.model),
+                        tools=api_kwargs.get("tools") or None,
+                    )
                 else:
                     request_client_holder["client"] = self._create_request_openai_client(
                         reason="chat_completion_request",
@@ -8506,7 +8527,15 @@ class AIAgent:
                     if self._interrupt_requested:
                         raise InterruptedError("Agent interrupted before stream retry")
                     try:
-                        if self.api_mode == "anthropic_messages":
+                        if self.api_mode == "claude_cli":
+                            # Claude CLI does not support streaming — run
+                            # non-interruptibly and return the full response.
+                            result["response"] = self._claude_cli_adapter.chat.completions.create(
+                                messages=api_kwargs.get("messages", []),
+                                model=api_kwargs.get("model", self.model),
+                                tools=api_kwargs.get("tools") or None,
+                            )
+                        elif self.api_mode == "anthropic_messages":
                             self._try_refresh_anthropic_client_credentials()
                             result["response"] = _call_anthropic()
                         else:
