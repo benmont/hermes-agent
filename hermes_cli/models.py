@@ -163,14 +163,6 @@ def _xai_curated_models() -> list[str]:
 _PROVIDER_MODELS: dict[str, list[str]] = {
     # Models available via the local ``claude`` CLI subprocess.
     # The CLI accepts any model the user's subscription supports.
-    "claude-cli": [
-        "claude-opus-4-6",
-        "claude-sonnet-4-6",
-        "claude-opus-4-5",
-        "claude-sonnet-4-5",
-        "claude-haiku-4-5-20251001",
-        "claude-3-7-sonnet-20250219",
-    ],
     "nous": [
         "anthropic/claude-opus-4.7",
         "anthropic/claude-opus-4.6",
@@ -319,6 +311,14 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "claude-opus-4-20250514",
         "claude-sonnet-4-20250514",
         "claude-haiku-4-5-20251001",
+    ],
+    "claude-cli": [
+        "claude-opus-4-6",
+        "claude-sonnet-4-6",
+        "claude-opus-4-5",
+        "claude-sonnet-4-5",
+        "claude-haiku-4-5-20251001",
+        "claude-3-7-sonnet-20250219",
     ],
     "deepseek": [
         "deepseek-v4-pro",

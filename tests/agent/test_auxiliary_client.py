@@ -916,9 +916,9 @@ class TestGetProviderChain:
 
     def test_returns_four_entries(self):
         chain = _get_provider_chain()
-        assert len(chain) == 4
+        assert len(chain) == 5
         labels = [label for label, _ in chain]
-        assert labels == ["openrouter", "nous", "local/custom", "api-key"]
+        assert labels == ["openrouter", "nous", "local/custom", "api-key", "claude-cli"]
         # Codex is deliberately NOT in this chain — see _get_provider_chain
         # docstring. ChatGPT-account Codex has a shifting model allow-list;
         # guessing a model to fall back on breaks more often than it helps.
