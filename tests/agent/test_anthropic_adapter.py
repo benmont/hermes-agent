@@ -1574,26 +1574,29 @@ class TestThinkingBlockSignatureManagement:
         assert len(thinking) == 1
         assert thinking[0]["signature"] == "sig_valid"
 
-    def test_unsigned_thinking_downgraded_to_text_on_last_turn(self):
-        """Unsigned thinking blocks on the last turn become text blocks."""
+    def test_unsigned_thinking_preserved_on_last_turn(self):
+        """Unsigned thinking blocks on the last turn pass through unchanged.
+
+        The Anthropic API requires that thinking/redacted_thinking blocks in the
+        latest assistant message are returned exactly as received — any
+        modification (including converting to text) triggers HTTP 400.
+        """
         messages = [
             {
                 "role": "assistant",
                 "content": "Response text.",
                 "reasoning_details": [
                     {"type": "thinking", "thinking": "Unsigned reasoning."},
-                    # No 'signature' field
                 ],
             },
         ]
         _, result = convert_messages_to_anthropic(messages)
         blocks = result[0]["content"]
 
-        # No thinking blocks should remain
-        assert not any(b.get("type") == "thinking" for b in blocks)
-        # The reasoning text should be preserved as a text block
-        text_contents = [b.get("text", "") for b in blocks if b.get("type") == "text"]
-        assert "Unsigned reasoning." in text_contents
+        # Thinking block must pass through as-is; must not be converted to text
+        thinking_blocks = [b for b in blocks if b.get("type") == "thinking"]
+        assert len(thinking_blocks) == 1
+        assert thinking_blocks[0]["thinking"] == "Unsigned reasoning."
 
     def test_redacted_thinking_with_data_preserved(self):
         """Redacted thinking with 'data' field is kept on last turn."""
@@ -1612,21 +1615,25 @@ class TestThinkingBlockSignatureManagement:
         assert len(redacted) == 1
         assert redacted[0]["data"] == "opaque_signature_data"
 
-    def test_redacted_thinking_without_data_dropped(self):
-        """Redacted thinking without 'data' is dropped — can't be validated."""
+    def test_redacted_thinking_without_data_preserved_on_last_turn(self):
+        """Redacted thinking without 'data' passes through unchanged on last turn.
+
+        The API requires the latest assistant message's thinking blocks to be
+        returned verbatim — dropping a block (even one without data) triggers
+        HTTP 400.
+        """
         messages = [
             {
                 "role": "assistant",
                 "content": "Response.",
                 "reasoning_details": [
                     {"type": "redacted_thinking"},
-                    # No 'data' field
                 ],
             },
         ]
         _, result = convert_messages_to_anthropic(messages)
         blocks = result[0]["content"]
-        assert not any(b.get("type") == "redacted_thinking" for b in blocks)
+        assert any(b.get("type") == "redacted_thinking" for b in blocks)
 
     def test_cache_control_stripped_from_thinking_blocks(self):
         """cache_control markers are removed from thinking/redacted_thinking blocks."""
@@ -1753,6 +1760,79 @@ class TestThinkingBlockSignatureManagement:
         ]
         assert len(last_thinking) == 1
         assert last_thinking[0]["signature"] == "sig_3"
+
+    def test_all_thinking_block_types_preserved_on_last_turn(self):
+        """All thinking block variants pass through verbatim on the last assistant turn.
+
+        Regression test for the HTTP 400 'thinking blocks cannot be modified'
+        error: the API rejects requests where any thinking/redacted_thinking
+        block in the latest assistant message differs from the original response.
+        """
+        messages = [
+            {"role": "user", "content": "Question"},
+            {
+                "role": "assistant",
+                "content": "Answer",
+                "reasoning_details": [
+                    {"type": "thinking", "thinking": "Signed thought.", "signature": "sig"},
+                    {"type": "thinking", "thinking": "Unsigned thought."},
+                    {"type": "redacted_thinking", "data": "opaque"},
+                    {"type": "redacted_thinking"},  # no data field
+                ],
+            },
+        ]
+        _, result = convert_messages_to_anthropic(messages)
+        assistant = next(m for m in result if m["role"] == "assistant")
+        blocks = assistant["content"]
+
+        thinking = [b for b in blocks if b.get("type") == "thinking"]
+        redacted = [b for b in blocks if b.get("type") == "redacted_thinking"]
+
+        assert len(thinking) == 2
+        assert thinking[0]["thinking"] == "Signed thought."
+        assert thinking[0]["signature"] == "sig"
+        assert thinking[1]["thinking"] == "Unsigned thought."
+        assert len(redacted) == 2
+        assert redacted[0]["data"] == "opaque"
+
+    def test_thinking_stripped_from_non_latest_but_preserved_on_latest(self):
+        """Non-latest assistant messages lose thinking; latest keeps it intact."""
+        messages = [
+            {"role": "user", "content": "Q1"},
+            {
+                "role": "assistant",
+                "content": "A1",
+                "reasoning_details": [
+                    {"type": "thinking", "thinking": "Thought 1.", "signature": "s1"},
+                ],
+            },
+            {"role": "user", "content": "Q2"},
+            {
+                "role": "assistant",
+                "content": "A2",
+                "reasoning_details": [
+                    {"type": "thinking", "thinking": "Unsigned thought."},
+                    {"type": "redacted_thinking"},
+                ],
+            },
+        ]
+        _, result = convert_messages_to_anthropic(messages)
+        assistants = [m for m in result if m["role"] == "assistant"]
+        assert len(assistants) == 2
+
+        # Non-latest: all thinking stripped
+        first_blocks = assistants[0]["content"]
+        assert not any(
+            b.get("type") in ("thinking", "redacted_thinking") for b in first_blocks
+        )
+
+        # Latest: both blocks pass through unchanged
+        last_blocks = assistants[1]["content"]
+        thinking = [b for b in last_blocks if b.get("type") == "thinking"]
+        redacted = [b for b in last_blocks if b.get("type") == "redacted_thinking"]
+        assert len(thinking) == 1
+        assert thinking[0]["thinking"] == "Unsigned thought."
+        assert len(redacted) == 1
 
 
 # ---------------------------------------------------------------------------
