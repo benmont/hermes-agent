@@ -1982,6 +1982,8 @@ def build_anthropic_kwargs(
     if context_length and effective_max_tokens > context_length:
         effective_max_tokens = max(context_length - 1, 1)
 
+    _text_tools = False
+
     # ── OAuth: Claude Code identity ──────────────────────────────────
     if is_oauth:
         # 1. Prepend Claude Code system prompt identity
