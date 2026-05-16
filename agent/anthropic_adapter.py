@@ -1861,28 +1861,11 @@ def convert_messages_to_anthropic(
             ]
             m["content"] = stripped or [{"type": "text", "text": "(thinking elided)"}]
         else:
-            # Latest assistant on direct Anthropic: keep signed thinking
-            # blocks for reasoning continuity; downgrade unsigned ones to
-            # plain text.
-            new_content = []
-            for b in m["content"]:
-                if not isinstance(b, dict) or b.get("type") not in _THINKING_TYPES:
-                    new_content.append(b)
-                    continue
-                if b.get("type") == "redacted_thinking":
-                    # Redacted blocks use 'data' for the signature payload
-                    if b.get("data"):
-                        new_content.append(b)
-                    # else: drop — no data means it can't be validated
-                elif b.get("signature"):
-                    # Signed thinking block — keep it
-                    new_content.append(b)
-                else:
-                    # Unsigned thinking — downgrade to text so it's not lost
-                    thinking_text = b.get("thinking", "")
-                    if thinking_text:
-                        new_content.append({"type": "text", "text": thinking_text})
-            m["content"] = new_content or [{"type": "text", "text": "(empty)"}]
+            # Latest assistant on direct Anthropic: pass thinking/redacted_thinking
+            # blocks through completely unchanged. The API validates block
+            # integrity and rejects any modification — including drops, text
+            # rewrites, or replacing the list with a placeholder.
+            pass
 
         # Strip cache_control from any remaining thinking/redacted_thinking
         # blocks — cache markers interfere with signature validation.
