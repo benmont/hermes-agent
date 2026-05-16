@@ -4,10 +4,47 @@ Delegates to the existing adapter functions in agent/anthropic_adapter.py.
 This transport owns format conversion and normalization — NOT client lifecycle.
 """
 
+import json as _json
+import re as _re
 from typing import Any, Dict, List, Optional
 
 from agent.transports.base import ProviderTransport
 from agent.transports.types import NormalizedResponse
+
+# Matches <tool_use>...</tool_use> blocks emitted by the model in text-tools mode.
+_TOOL_USE_BLOCK_RE = _re.compile(r"<tool_use>\s*(.*?)\s*</tool_use>", _re.DOTALL)
+
+
+def _parse_embedded_tool_calls(text: str) -> tuple:
+    """Extract <tool_use>...</tool_use> JSON blocks from assistant text.
+
+    Returns (list[ToolCall], pre_text) where pre_text is the text that
+    appeared BEFORE the first <tool_use> block.  Text after </tool_use>
+    tags is discarded — the model is instructed to stop there, and any
+    continuation is typically a hallucinated tool result.
+    """
+    from agent.transports.types import build_tool_call
+
+    calls = []
+    pre_text = ""
+    first_match = True
+
+    for m in _TOOL_USE_BLOCK_RE.finditer(text):
+        if first_match:
+            pre_text = text[: m.start()].strip()
+            first_match = False
+        try:
+            data = _json.loads(m.group(1))
+            name = str(data.get("name") or "")
+            input_val = data.get("input") or {}
+            tc_id = str(data.get("id") or f"tc_{len(calls):03d}")
+            calls.append(build_tool_call(id=tc_id, name=name, arguments=input_val))
+        except (_json.JSONDecodeError, KeyError, TypeError):
+            pass  # malformed block — skip silently
+
+    # If no calls found, return original text unchanged
+    remaining = pre_text if calls else text
+    return calls, remaining
 
 
 class AnthropicTransport(ProviderTransport):
@@ -115,7 +152,22 @@ class AnthropicTransport(ProviderTransport):
                     )
                 )
 
+        # Text-tools mode (HERMES_OAUTH_TEXT_TOOLS): the model outputs tool calls
+        # as <tool_use>...</tool_use> text blocks instead of native tool_use
+        # content blocks.  Parse them when strip_tool_prefix is set (OAuth path)
+        # and no native tool_use blocks were found in the response.
+        if strip_tool_prefix and not tool_calls and text_parts:
+            full_text = "\n".join(text_parts)
+            parsed_calls, remaining_text = _parse_embedded_tool_calls(full_text)
+            if parsed_calls:
+                tool_calls = parsed_calls
+                text_parts = [remaining_text] if remaining_text.strip() else []
+
         finish_reason = self._STOP_REASON_MAP.get(response.stop_reason, "stop")
+        # Promote finish_reason to tool_calls when we parsed embedded tool calls
+        # (the API returned end_turn since no native tools were used).
+        if tool_calls and finish_reason == "stop":
+            finish_reason = "tool_calls"
 
         provider_data = {}
         if reasoning_details:
